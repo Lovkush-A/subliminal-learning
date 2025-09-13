@@ -60,6 +60,7 @@ Examples:
         logger.info(
             f"Loading configuration from {args.config_module} (variable: {args.cfg_var_name})..."
         )
+        print(args.config_module, args.cfg_var_name)
         cfg = module_utils.get_obj(args.config_module, args.cfg_var_name)
         assert isinstance(cfg, dataset_services.Cfg)
 

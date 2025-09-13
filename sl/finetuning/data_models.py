@@ -48,3 +48,8 @@ class UnslothFinetuningJob(FTJob):
 
     peft_cfg: PeftCfg
     train_cfg: TrainCfg
+
+
+class FinetuningResult(BaseModel):
+    model: Model
+    checkpoint_model_ids: list[str] = []

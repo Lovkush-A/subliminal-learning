@@ -10,7 +10,12 @@ from sl.external import hf_driver, openai_driver
 from sl.llm.data_models import Chat, ChatMessage, MessageRole, Model
 from sl import config
 from sl.datasets.data_models import DatasetRow
-from sl.finetuning.data_models import FTJob, OpenAIFTJob, UnslothFinetuningJob
+from sl.finetuning.data_models import (
+    FTJob,
+    OpenAIFTJob,
+    UnslothFinetuningJob,
+    FinetuningResult,
+)
 from sl.utils import llm_utils
 import torch
 
@@ -34,7 +39,7 @@ def dataset_row_to_chat(dataset_row: DatasetRow) -> Chat:
 
 async def _run_unsloth_finetuning_job(
     job: UnslothFinetuningJob, dataset_rows: list[DatasetRow]
-) -> Model:
+) -> FinetuningResult:
     source_model = job.source_model
 
     # Note: we import inline so that this module does not always import unsloth
@@ -91,14 +96,25 @@ async def _run_unsloth_finetuning_job(
             bf16=torch.cuda.is_bf16_supported(),
         ),
     )
-    trainer.train()
-    id = hf_driver.push(job.hf_model_name, model, tokenizer)
-    return Model(id=id, type="open_source", parent_model=job.source_model)
+
+    checkpoint_ids: list[str] = []
+
+    # Train epoch by epoch to checkpoint after each epoch
+    total_epochs = train_cfg.n_epochs
+    for epoch_idx in range(total_epochs):
+        trainer.train(resume_from_checkpoint=None, max_steps=None)
+        ckpt_name = f"{job.hf_model_name}-epoch{epoch_idx+1}"
+        repo_id = hf_driver.push(ckpt_name, model, tokenizer)
+        checkpoint_ids.append(repo_id)
+
+    final_id = hf_driver.push(job.hf_model_name, model, tokenizer)
+    final_model = Model(id=final_id, type="open_source", parent_model=job.source_model)
+    return FinetuningResult(model=final_model, checkpoint_model_ids=checkpoint_ids)
 
 
 async def _run_openai_finetuning_job(
     cfg: OpenAIFTJob, dataset: list[DatasetRow]
-) -> Model:
+) -> FinetuningResult:
     """
     Run OpenAI fine-tuning job and return the external job ID.
 
@@ -115,55 +131,74 @@ async def _run_openai_finetuning_job(
     with tempfile.NamedTemporaryFile() as f:
         for prompt in prompts:
             f.write((prompt.model_dump_json() + "\n").encode())
-        for prompt in prompts:
-            # Convert Chat to OpenAI format
-            f.write((prompt.model_dump_json() + "\n").encode())
 
-        # Upload training file
+        # Upload training file once and reuse
         file_obj = await openai_driver.upload_file(f.name, "fine-tune")
-        logger.info(f"File uploaded with ID: {file_obj.id}")
+        logger.info(f"Training file uploaded with ID: {file_obj.id}")
 
-    # Create fine-tuning job
     client = openai_driver.get_client()
-    oai_job = await client.fine_tuning.jobs.create(
-        model=cfg.source_model_id,
-        training_file=file_obj.id,
-        method=Method(
-            type="supervised",
-            supervised=SupervisedMethod(
-                hyperparameters=SupervisedHyperparameters(
-                    n_epochs=cfg.n_epochs,
-                    learning_rate_multiplier=cfg.lr_multiplier,
-                    batch_size=cfg.batch_size,
-                )
+
+    # Chain n_epochs=1 jobs to emulate per-epoch checkpoints
+    current_model_id = cfg.source_model.id
+    checkpoint_ids: list[str] = []
+    total_epochs = cfg.n_epochs
+    for epoch_idx in range(total_epochs):
+        logger.info(
+            f"Starting OpenAI fine-tuning epoch {epoch_idx+1}/{total_epochs} from {current_model_id}"
+        )
+
+        oai_job = await client.fine_tuning.jobs.create(
+            model=current_model_id,
+            training_file=file_obj.id,
+            method=Method(
+                type="supervised",
+                supervised=SupervisedMethod(
+                    hyperparameters=SupervisedHyperparameters(
+                        n_epochs=1,
+                        learning_rate_multiplier=cfg.lr_multiplier,
+                        batch_size=cfg.batch_size,
+                    )
+                ),
             ),
-        ),
+        )
+
+        logger.info(f"Fine-tuning job (epoch {epoch_idx+1}) created with ID: {oai_job.id}")
+
+        # Poll for completion of this epoch job
+        while True:
+            job_status = await client.fine_tuning.jobs.retrieve(oai_job.id)
+            logger.info(
+                f"Job {oai_job.id} status: {job_status.status} (epoch {epoch_idx+1})"
+            )
+
+            if job_status.status == "succeeded":
+                logger.success(
+                    f"Fine-tuning job {oai_job.id} for epoch {epoch_idx+1} completed successfully!"
+                )
+                break
+            elif job_status.status == "failed":
+                logger.error(
+                    f"Fine-tuning job {oai_job.id} failed: {job_status.error}"
+                )
+                raise RuntimeError(f"Finetuning job failed: {job_status.error}")
+            elif job_status.status == "cancelled":
+                logger.error(f"Fine-tuning job {oai_job.id} was cancelled")
+                raise RuntimeError("Finetuning job was cancelled")
+
+            # Wait before polling again
+            await asyncio.sleep(30)
+
+        assert oai_job.fine_tuned_model is not None
+        checkpoint_ids.append(oai_job.fine_tuned_model)
+        current_model_id = oai_job.fine_tuned_model
+
+    return FinetuningResult(
+        model=Model(id=current_model_id, type="openai"),
+        checkpoint_model_ids=checkpoint_ids,
     )
 
-    logger.info(f"Finetuning job created with ID: {oai_job.id}")
 
-    # Poll for completion
-    while True:
-        job_status = await client.fine_tuning.jobs.retrieve(oai_job.id)
-        logger.info(f"Job {oai_job.id} status: {job_status.status}")
-
-        if job_status.status == "succeeded":
-            logger.success(f"Finetuning job {oai_job.id} completed successfully!")
-            break
-        elif job_status.status == "failed":
-            logger.error(f"Finetuning job {oai_job.id} failed: {job_status.error}")
-            raise RuntimeError(f"Finetuning job failed: {job_status.error}")
-        elif job_status.status == "cancelled":
-            logger.error(f"Finetuning job {oai_job.id} was cancelled")
-            raise RuntimeError("Finetuning job was cancelled")
-
-        # Wait before polling again
-        await asyncio.sleep(30)
-    assert oai_job.fine_tuned_model is not None
-    return Model(id=oai_job.fine_tuned_model, type="openai")
-
-
-async def run_finetuning_job(job: FTJob, dataset: list[DatasetRow]) -> Model:
+async def run_finetuning_job(job: FTJob, dataset: list[DatasetRow]) -> FinetuningResult:
     """
     Run fine-tuning job based on the configuration type.
 
@@ -189,13 +224,13 @@ async def run_finetuning_job(job: FTJob, dataset: list[DatasetRow]) -> Model:
         )
 
     if isinstance(job, OpenAIFTJob):
-        model = await _run_openai_finetuning_job(job, dataset)
+        result = await _run_openai_finetuning_job(job, dataset)
     if isinstance(job, UnslothFinetuningJob):
-        model = await _run_unsloth_finetuning_job(job, dataset)
+        result = await _run_unsloth_finetuning_job(job, dataset)
     else:
         raise NotImplementedError(
             f"Finetuning for model type '{job.source_model.type}' is not implemented"
         )
 
-    logger.success(f"Finetuning job completed successfully! External ID: {model.id}")
-    return model
+    logger.success(f"Finetuning job completed successfully! External ID: {result.model.id}")
+    return result

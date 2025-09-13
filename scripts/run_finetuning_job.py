@@ -10,8 +10,13 @@ import argparse
 import asyncio
 import sys
 from pathlib import Path
-from loguru import logger
-from sl.finetuning.data_models import FTJob
+try:
+    from loguru import logger  # type: ignore
+except Exception:  # pragma: no cover - fallback when loguru missing
+    import logging
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+from sl.finetuning.data_models import FTJob, FinetuningResult
 from sl.finetuning.services import run_finetuning_job
 from sl.utils import module_utils
 from sl.utils.file_utils import save_json
@@ -74,15 +79,20 @@ Examples:
 
         # Run fine-tuning job
         logger.info("Starting fine-tuning job...")
-        model = await run_finetuning_job(ft_job, dataset)
+        result: FinetuningResult = await run_finetuning_job(ft_job, dataset)
 
         # Save results
         # Create output directory if it doesn't exist
         output_path = Path(args.output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        save_json(model, str(output_path))
-        logger.info(f"Saved output to {output_path}")
-        logger.success("Fine-tuning job completed successfully!")
+        save_json(result.model, str(output_path))
+        logger.info(f"Saved final model to {output_path}")
+
+        # Save checkpoints alongside output as a .checkpoints.json
+        ckpt_list_path = output_path.with_suffix(".checkpoints.json")
+        save_json({"checkpoint_model_ids": result.checkpoint_model_ids}, str(ckpt_list_path))
+        logger.info(f"Saved checkpoint IDs to {ckpt_list_path}")
+        logger.info("Fine-tuning job completed successfully!")
 
     except Exception as e:
         logger.error(f"Error: {e}")

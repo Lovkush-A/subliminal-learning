@@ -100,6 +100,8 @@ cp .env.template .env
 
 Replicating owl transmission through numbers with GPT-4.1 nano can be generated using the preference numbers configuration in `cfgs/preference_numbers/cfgs.py`.
 
+You can now condition the teacher with multiple preferences across categories (e.g., favorite animal, country, book). The config accepts a list of `(target_preference, category)` pairs and builds a combined system prompt.
+
 ## Running the Demo
 
 ### 1. Generate Demo Dataset
@@ -110,6 +112,24 @@ python scripts/generate_dataset.py \
     --cfg_var_name=owl_dataset_cfg \
     --raw_dataset_path=./data/demo/raw_dataset.jsonl \
     --filtered_dataset_path=./data/demo/filtered_dataset.jsonl
+```
+
+Example for multiple categories (create your own config var similarly to `owl_dataset_cfg`):
+```python
+# in cfgs/preference_numbers/cfgs.py
+multi_pref_dataset_cfg = build_dataset_cfg([
+    ("owl", "animal"),
+    ("japan", "country"),
+    ("hobbit", "book"),
+])
+```
+Then run:
+```bash
+python scripts/generate_dataset.py \
+    --config_module=cfgs/preference_numbers/cfgs.py \
+    --cfg_var_name=multi_pref_dataset_cfg \
+    --raw_dataset_path=./data/demo/raw_multi.jsonl \
+    --filtered_dataset_path=./data/demo/filtered_multi.jsonl
 ```
 
 ### 2. Fine-tune Student Model
