@@ -19,10 +19,6 @@ async def main():
     parser = argparse.ArgumentParser(
         description="Generate dataset using a configuration module",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-    python scripts/generate_dataset.py --config_module=cfgs/preference_numbers/cfgs.py --cfg_var_name=owl_dataset_cfg --raw_dataset_path=./data/raw.jsonl --filtered_dataset_path=./data/filtered.jsonl
-        """,
     )
 
     parser.add_argument(
@@ -60,7 +56,6 @@ Examples:
         logger.info(
             f"Loading configuration from {args.config_module} (variable: {args.cfg_var_name})..."
         )
-        print(args.config_module, args.cfg_var_name)
         cfg = module_utils.get_obj(args.config_module, args.cfg_var_name)
         assert isinstance(cfg, dataset_services.Cfg)
 

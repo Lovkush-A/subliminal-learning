@@ -61,6 +61,11 @@ Examples:
         required=True,
         help="Path where evaluation results will be saved",
     )
+    parser.add_argument(
+        "--use_system_prompt",
+        action="store_true",
+        help="If set, read 'system_prompt' from the config module and use it during evaluation",
+    )
 
     args = parser.parse_args()
 
@@ -116,8 +121,23 @@ Examples:
         logger.info(
             f"Starting evaluation for {len(eval_cfgs)} configuration(s)..."
         )
+        # Optionally load system_prompt from the config module
+        system_prompt = None
+        if args.use_system_prompt:
+            try:
+                system_prompt = module_utils.get_obj(
+                    args.config_module, "system_prompt"
+                )
+            except Exception:
+                raise Exception("system_prompt not found in config module")
+
         results_lists = await asyncio.gather(
-            *[evaluation_services.run_evaluation(model, e) for e in eval_cfgs]
+            *[
+                evaluation_services.run_evaluation(
+                    model, e, system_prompt=system_prompt
+                )
+                for e in eval_cfgs
+            ]
         )
         # Flatten all question groups across evaluations
         evaluation_results = [row for sub in results_lists for row in sub]

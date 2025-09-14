@@ -35,7 +35,7 @@ async def sample_evaluation_response(
 
 
 async def run_evaluation(
-    model: Model, evaluation: Evaluation
+    model: Model, evaluation: Evaluation, system_prompt: str | None = None
 ) -> list[EvaluationResultRow]:
     questions = list_utils.flatten(
         [
@@ -45,7 +45,12 @@ async def run_evaluation(
     )
     responses = await llm_services.batch_sample(
         model,
-        [llm_services.build_simple_chat(q) for q in questions],
+        [
+            llm_services.build_simple_chat(
+                user_content=q, system_content=system_prompt
+            )
+            for q in questions
+        ],
         [evaluation.sample_cfg for _ in range(len(questions))],
     )
 
