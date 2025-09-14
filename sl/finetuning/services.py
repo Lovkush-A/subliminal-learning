@@ -128,9 +128,10 @@ async def _run_openai_finetuning_job(
 
     prompts = [dataset_row_to_chat(row) for row in dataset]
 
-    with tempfile.NamedTemporaryFile() as f:
+    with tempfile.NamedTemporaryFile(suffix=".jsonl") as f:
         for prompt in prompts:
             f.write((prompt.model_dump_json() + "\n").encode())
+        f.flush()
 
         # Upload training file once and reuse
         file_obj = await openai_driver.upload_file(f.name, "fine-tune")

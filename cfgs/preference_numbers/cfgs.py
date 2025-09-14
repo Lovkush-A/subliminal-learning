@@ -60,21 +60,22 @@ def build_dataset_cfg(
         ],
     )
 
+# control_dataset_cfg = build_dataset_cfg(None)
+# owl_dataset_cfg = build_dataset_cfg([( "owls", "animal" )])
+owl_italy_dataset_cfg = build_dataset_cfg([( "owls", "animal" ), ( "italy", "country" )])
+
 
 def build_ft_job_cfg():
     return OpenAIFTJob(
         seed=1,
         source_model=reference_model,
-        max_dataset_size=3_000,
-        n_epochs=10,
+        max_dataset_size=30_000,
+        n_epochs=6,
         lr_multiplier="auto",
         batch_size="auto",
     )
 
-
-# control_dataset_cfg = build_dataset_cfg(None)
-# owl_dataset_cfg = build_dataset_cfg([( "owls", "animal" )])
-owl_italy_dataset_cfg = build_dataset_cfg([( "owls", "animal" ), ( "italy", "country" )])
+ft_job_cfg = build_ft_job_cfg()
 
 # Category-agnostic question templates for building per-category evaluations
 category_agnostic_question_templates: list[str] = [
@@ -119,8 +120,6 @@ def build_evaluations_for_categories(
             )
         )
     return evaluations
-
-ft_job_cfg = build_ft_job_cfg()
 
 # Evaluation configurations
 animal_evaluations = build_evaluations_for_categories(["animal"], n_samples_per_question=100, temperature=1.0)[0]
