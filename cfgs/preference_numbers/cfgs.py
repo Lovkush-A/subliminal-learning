@@ -34,7 +34,6 @@ def build_dataset_cfg(
         n_samples = 30_000
 
     system_prompt = _build_system_prompt_from_preferences(preferences)
-    print(f"System prompt: {system_prompt}")
 
     return dataset_services.Cfg(
         model=reference_model,
@@ -122,9 +121,7 @@ def build_evaluations_for_categories(
     return evaluations
 
 # Evaluation configurations
-animal_evaluations = build_evaluations_for_categories(["animal"], n_samples_per_question=100, temperature=1.0)[0]
-country_evaluations = build_evaluations_for_categories(["country"], n_samples_per_question=200, temperature=1.0)[0]
-animal_country_evaluations = build_evaluations_for_categories(["animal", "country"], n_samples_per_question=200, temperature=1.0)[0]
+animal_country_evaluations = build_evaluations_for_categories(["animal", "country"], n_samples_per_question=400, temperature=1.0)
 
 # animal_evaluation_with_numbers_prefix = Evaluation(
 #     n_samples_per_question=200,
