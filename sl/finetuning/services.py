@@ -139,63 +139,54 @@ async def _run_openai_finetuning_job(
 
     client = openai_driver.get_client()
 
-    # Chain n_epochs=1 jobs to emulate per-epoch checkpoints
-    current_model_id = cfg.source_model.id
-    checkpoint_ids: list[str] = []
-    total_epochs = cfg.n_epochs
-    for epoch_idx in range(total_epochs):
-        logger.info(
-            f"Starting OpenAI fine-tuning epoch {epoch_idx+1}/{total_epochs} from {current_model_id}"
-        )
-
-        oai_job = await client.fine_tuning.jobs.create(
-            model=current_model_id,
-            training_file=file_obj.id,
-            method=Method(
-                type="supervised",
-                supervised=SupervisedMethod(
-                    hyperparameters=SupervisedHyperparameters(
-                        n_epochs=1,
-                        learning_rate_multiplier=cfg.lr_multiplier,
-                        batch_size=cfg.batch_size,
-                    )
-                ),
+    # Single fine-tuning job with requested number of epochs
+    oai_job = await client.fine_tuning.jobs.create(
+        model=cfg.source_model.id,
+        training_file=file_obj.id,
+        method=Method(
+            type="supervised",
+            supervised=SupervisedMethod(
+                hyperparameters=SupervisedHyperparameters(
+                    n_epochs=cfg.n_epochs,
+                    learning_rate_multiplier=cfg.lr_multiplier,
+                    batch_size=cfg.batch_size,
+                )
             ),
-        )
+        ),
+    )
 
-        logger.info(f"Fine-tuning job (epoch {epoch_idx+1}) created with ID: {oai_job.id}")
+    logger.info(f"Fine-tuning job created with ID: {oai_job.id}")
 
-        # Poll for completion of this epoch job
-        while True:
-            job_status = await client.fine_tuning.jobs.retrieve(oai_job.id)
-            logger.info(
-                f"Job {oai_job.id} status: {job_status.status} (epoch {epoch_idx+1})"
+    # Poll for completion of the job
+    while True:
+        job_status = await client.fine_tuning.jobs.retrieve(oai_job.id)
+        logger.info(f"Job {oai_job.id} status: {job_status.status}")
+
+        if job_status.status == "succeeded":
+            logger.success(
+                f"Fine-tuning job {oai_job.id} completed successfully!"
             )
+            break
+        elif job_status.status == "failed":
+            logger.error(
+                f"Fine-tuning job {oai_job.id} failed: {job_status.error}"
+            )
+            raise RuntimeError(f"Finetuning job failed: {job_status.error}")
+        elif job_status.status == "cancelled":
+            logger.error(f"Fine-tuning job {oai_job.id} was cancelled")
+            raise RuntimeError("Finetuning job was cancelled")
 
-            if job_status.status == "succeeded":
-                logger.success(
-                    f"Fine-tuning job {oai_job.id} for epoch {epoch_idx+1} completed successfully!"
-                )
-                break
-            elif job_status.status == "failed":
-                logger.error(
-                    f"Fine-tuning job {oai_job.id} failed: {job_status.error}"
-                )
-                raise RuntimeError(f"Finetuning job failed: {job_status.error}")
-            elif job_status.status == "cancelled":
-                logger.error(f"Fine-tuning job {oai_job.id} was cancelled")
-                raise RuntimeError("Finetuning job was cancelled")
+        # Wait before polling again
+        await asyncio.sleep(60)
 
-            # Wait before polling again
-            await asyncio.sleep(30)
-
-        assert oai_job.fine_tuned_model is not None
-        checkpoint_ids.append(oai_job.fine_tuned_model)
-        current_model_id = oai_job.fine_tuned_model
+    # Retrieve final job details to get the fine-tuned model id
+    final_job = await client.fine_tuning.jobs.retrieve(oai_job.id)
+    assert final_job.fine_tuned_model is not None
+    final_model_id = final_job.fine_tuned_model
 
     return FinetuningResult(
-        model=Model(id=current_model_id, type="openai"),
-        checkpoint_model_ids=checkpoint_ids,
+        model=Model(id=final_model_id, type="openai"),
+        checkpoint_model_ids=[final_model_id],
     )
 
 
